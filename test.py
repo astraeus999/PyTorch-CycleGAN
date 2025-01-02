@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 import argparse
 import sys
 import os
@@ -15,14 +13,14 @@ from datasets import ImageDataset
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--batchSize', type=int, default=1, help='size of the batches')
-parser.add_argument('--dataroot', type=str, default='datasets/horse2zebra/', help='root directory of the dataset')
+parser.add_argument('--dataroot', type=str, default='datasets/satellite/', help='root directory of the dataset')
 parser.add_argument('--input_nc', type=int, default=3, help='number of channels of input data')
 parser.add_argument('--output_nc', type=int, default=3, help='number of channels of output data')
 parser.add_argument('--size', type=int, default=256, help='size of the data (squared assumed)')
 parser.add_argument('--cuda', action='store_true', help='use GPU computation')
 parser.add_argument('--n_cpu', type=int, default=8, help='number of cpu threads to use during batch generation')
-parser.add_argument('--generator_A2B', type=str, default='output/netG_A2B.pth', help='A2B generator checkpoint file')
-parser.add_argument('--generator_B2A', type=str, default='output/netG_B2A.pth', help='B2A generator checkpoint file')
+parser.add_argument('--generator_A2B', type=str, default='output/experiment/netG_A2B_epoch150_step501.pth', help='A2B generator checkpoint file')
+parser.add_argument('--generator_B2A', type=str, default='output/experiment/netG_B2A_epoch150_step501.pth', help='B2A generator checkpoint file')
 opt = parser.parse_args()
 print(opt)
 
@@ -55,10 +53,11 @@ input_B = Tensor(opt.batchSize, opt.output_nc, opt.size, opt.size)
 transforms_ = [ transforms.ToTensor(),
                 transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)) ]
 dataloader = DataLoader(ImageDataset(opt.dataroot, transforms_=transforms_, mode='test'), 
-                        batch_size=opt.batchSize, shuffle=False, num_workers=opt.n_cpu)
+                        batch_size=opt.batchSize, shuffle=False, num_workers=opt.n_cpu, drop_last=True)
 ###################################
 
 ###### Testing######
+### here we would only use A to B generator, A is low resolution; B is high resolution
 
 # Create output dirs if they don't exist
 if not os.path.exists('output/A'):
@@ -69,14 +68,14 @@ if not os.path.exists('output/B'):
 for i, batch in enumerate(dataloader):
     # Set model input
     real_A = Variable(input_A.copy_(batch['A']))
-    real_B = Variable(input_B.copy_(batch['B']))
+    # real_B = Variable(input_B.copy_(batch['B']))
 
     # Generate output
     fake_B = 0.5*(netG_A2B(real_A).data + 1.0)
-    fake_A = 0.5*(netG_B2A(real_B).data + 1.0)
+    # fake_A = 0.5*(netG_B2A(real_B).data + 1.0)
 
     # Save image files
-    save_image(fake_A, 'output/A/%04d.png' % (i+1))
+    # save_image(fake_A, 'output/A/%04d.png' % (i+1))
     save_image(fake_B, 'output/B/%04d.png' % (i+1))
 
     sys.stdout.write('\rGenerated images %04d of %04d' % (i+1, len(dataloader)))

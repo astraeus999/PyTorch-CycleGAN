@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 import argparse
 import itertools
 
@@ -19,8 +17,8 @@ from datasets import ImageDataset
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--epoch', type=int, default=0, help='starting epoch')
-parser.add_argument('--n_epochs', type=int, default=200, help='number of epochs of training')
-parser.add_argument('--batchSize', type=int, default=1, help='size of the batches')
+parser.add_argument('--n_epochs', type=int, default=150, help='number of epochs of training')
+parser.add_argument('--batchSize', type=int, default=4, help='size of the batches')
 parser.add_argument('--dataroot', type=str, default='datasets/horse2zebra/', help='root directory of the dataset')
 parser.add_argument('--lr', type=float, default=0.0002, help='initial learning rate')
 parser.add_argument('--decay_epoch', type=int, default=100, help='epoch to start linearly decaying the learning rate to 0')
@@ -42,17 +40,27 @@ netG_B2A = Generator(opt.output_nc, opt.input_nc)
 netD_A = Discriminator(opt.input_nc)
 netD_B = Discriminator(opt.output_nc)
 
-if opt.cuda:
-    netG_A2B.cuda()
-    netG_B2A.cuda()
-    netD_A.cuda()
-    netD_B.cuda()
+print('Finished loading network.')
+netG_A2B = Generator(opt.input_nc, opt.output_nc)
+netG_B2A = Generator(opt.output_nc, opt.input_nc)
+netD_A = Discriminator(opt.input_nc)
+netD_B = Discriminator(opt.output_nc)
 
+# Apply weight initialization
 netG_A2B.apply(weights_init_normal)
 netG_B2A.apply(weights_init_normal)
 netD_A.apply(weights_init_normal)
 netD_B.apply(weights_init_normal)
 
+print('Finished initializing network...')
+device = torch.device("cuda:0" if torch.cuda.is_available() and opt.cuda else "cpu")
+print("Using device:", device)
+# Move models to device later
+netG_A2B = netG_A2B.to(device)
+netG_B2A = netG_B2A.to(device)
+netD_A = netD_A.to(device)
+netD_B = netD_B.to(device)
+print('Finished moving network to CUDA...')
 # Lossess
 criterion_GAN = torch.nn.MSELoss()
 criterion_cycle = torch.nn.L1Loss()
@@ -67,7 +75,7 @@ optimizer_D_B = torch.optim.Adam(netD_B.parameters(), lr=opt.lr, betas=(0.5, 0.9
 lr_scheduler_G = torch.optim.lr_scheduler.LambdaLR(optimizer_G, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step)
 lr_scheduler_D_A = torch.optim.lr_scheduler.LambdaLR(optimizer_D_A, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step)
 lr_scheduler_D_B = torch.optim.lr_scheduler.LambdaLR(optimizer_D_B, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step)
-
+print('Finished setting up optimizers and LR schedulers.')
 # Inputs & targets memory allocation
 Tensor = torch.cuda.FloatTensor if opt.cuda else torch.Tensor
 input_A = Tensor(opt.batchSize, opt.input_nc, opt.size, opt.size)
@@ -77,20 +85,25 @@ target_fake = Variable(Tensor(opt.batchSize).fill_(0.0), requires_grad=False)
 
 fake_A_buffer = ReplayBuffer()
 fake_B_buffer = ReplayBuffer()
-
+print('Finished setting up inputs and targets.')
 # Dataset loader
+print('Start loading data...')
 transforms_ = [ transforms.Resize(int(opt.size*1.12), Image.BICUBIC), 
                 transforms.RandomCrop(opt.size), 
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)) ]
 dataloader = DataLoader(ImageDataset(opt.dataroot, transforms_=transforms_, unaligned=True), 
-                        batch_size=opt.batchSize, shuffle=True, num_workers=opt.n_cpu)
+                        batch_size=opt.batchSize, shuffle=True, num_workers=opt.n_cpu, drop_last=True)
+num_batches = len(dataloader)
+print('Finished loading data.')
+# print(f'Batch size: {opt.batchSize}')
+print(f'Number of batches: {num_batches}')
 
 # Loss plot
-logger = Logger(opt.n_epochs, len(dataloader))
+# logger = Logger(opt.n_epochs, len(dataloader))
 ###################################
-
+print('Start training...')
 ###### Training ######
 for epoch in range(opt.epoch, opt.n_epochs):
     for i, batch in enumerate(dataloader):
@@ -169,11 +182,21 @@ for epoch in range(opt.epoch, opt.n_epochs):
 
         optimizer_D_B.step()
         ###################################
+        ## added: print loss every 100 steps
+        if i % 100 == 0:
+                print(f"Epoch [{epoch+1}/{opt.n_epochs}], Step [{i+1}/{len(dataloader)}], Loss_G: {loss_G.item():.4f}, Loss_D_A: {loss_D_A.item():.4f}, Loss_D_B: {loss_D_B.item():.4f}")
+            
+            # Added: Save checkpoint every 250 steps
+        if i % 250 == 0:
+            torch.save(netG_A2B.state_dict(), f'output/experiment/netG_A2B_epoch{epoch+1}_step{i+1}.pth')
+            torch.save(netG_B2A.state_dict(), f'output/experiment/netG_B2A_epoch{epoch+1}_step{i+1}.pth')
+            torch.save(netD_A.state_dict(), f'output/experiment/netD_A_epoch{epoch+1}_step{i+1}.pth')
 
-        # Progress report (http://localhost:8097)
-        logger.log({'loss_G': loss_G, 'loss_G_identity': (loss_identity_A + loss_identity_B), 'loss_G_GAN': (loss_GAN_A2B + loss_GAN_B2A),
-                    'loss_G_cycle': (loss_cycle_ABA + loss_cycle_BAB), 'loss_D': (loss_D_A + loss_D_B)}, 
-                    images={'real_A': real_A, 'real_B': real_B, 'fake_A': fake_A, 'fake_B': fake_B})
+
+        # # Progress report (http://localhost:8097)
+        # logger.log({'loss_G': loss_G, 'loss_G_identity': (loss_identity_A + loss_identity_B), 'loss_G_GAN': (loss_GAN_A2B + loss_GAN_B2A),
+        #             'loss_G_cycle': (loss_cycle_ABA + loss_cycle_BAB), 'loss_D': (loss_D_A + loss_D_B)}, 
+        #             images={'real_A': real_A, 'real_B': real_B, 'fake_A': fake_A, 'fake_B': fake_B})
 
     # Update learning rates
     lr_scheduler_G.step()
